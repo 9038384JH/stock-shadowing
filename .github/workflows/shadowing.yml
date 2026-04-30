@@ -21,7 +21,7 @@ jobs:
           python-version: '3.11'
 
       - name: 패키지 설치
-        run: pip install yfinance pykrx pandas requests
+        run: pip install -r requirements.txt
 
       - name: 실행
         env:
