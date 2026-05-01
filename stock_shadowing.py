@@ -35,11 +35,7 @@ def send_telegram(message: str):
     chunks = [message[i:i+4000] for i in range(0, len(message), 4000)]
     for chunk in chunks:
         try:
-            r = requests.post(url, json={
-                "chat_id":    TELEGRAM_CHAT_ID,
-                "text":       chunk,
-                "parse_mode": "HTML",
-            }, timeout=10)
+            r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk, "parse_mode": "HTML"}, timeout=10)
             if not r.ok:
                 logging.warning(f"Telegram error: {r.text}")
             time.sleep(0.5)
@@ -56,32 +52,7 @@ def run_kr_shadowing():
         df2 = krx.get_market_ohlcv(prev_day, market="KOSDAQ")
         df  = pd.concat([df, df2])
         df["거래대금억"] = df["거래대금"] / 1e8
-        filtered = df[(df["등락률"] >= 15) & (df["거래대금억"] >= 500)].copy()
-        filtered = filtered.sort_values("등락률", ascending=False)
-        if filtered.empty:
-            send_telegram(
-                f"<b>국내 쉐도잉</b>  {today.strftime('%m/%d')}\n"
-                "조건 충족 종목 없음 (상승률 15%+ 거래대금 500억+)"
-            )
-            return
-        lines = [
-            f"<b>국내 주식 쉐도잉</b>  {today.strftime('%m/%d')} 전일 종가",
-            f"조건: 상승률 15%+ 거래대금 500억+  {len(filtered)}개 종목",
-        ]
-        for code, row in filtered.iterrows():
-            name = krx.get_market_ticker_name(code)
-            lines.append(
-                f"<b>{name}</b>({code}) "
-                f"+{row['등락률']:.1f}%  "
-                f"{row['거래대금억']:.0f}억  "
-                f"{int(row['종가']):,}원"
-            )
-        send_telegram("\n".join(lines))
-        logging.info(f"국내 쉐도잉 완료: {len(filtered)}개")
-    except Exception as e:
-        logging.error(f"국내 쉐도잉 오류: {e}")
-        send_telegram(f"국내 쉐도잉 오류: {e}")
-
+        filtered = df[(df["등락률"] >
 
 def is_priority_sector(sector: str) -> str:
     if not sector:
@@ -97,9 +68,7 @@ def run_us_shadowing():
     try:
         today = datetime.now(KST)
         try:
-            sp500 = pd.read_csv(
-                "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
-            )["Symbol"].tolist()
+            sp500 = pd.read_csv("https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv")["Symbol"].tolist()
         except Exception:
             sp500 = []
         extra = ["PLTR","TSLA","RKLB","NVDA","AMD","META","GOOGL","MSFT","AMZN","NFLX","CRWD","SNOW","DDOG","NET","SMCI","ARM","IONQ","RGTI","QUBT","LUNR","ASTS","OKLO","CEG","VST","NRG","GEV","ETN","PWR","ARRY"]
@@ -122,24 +91,21 @@ def run_us_shadowing():
                 market_cap = getattr(info, "market_cap", 0) or 0
                 if market_cap < 1_000_000_000:
                     continue
-                quote_type = (getattr(info, "quote_type", "") or "").upper()
-                if quote_type in ["ETF", "MUTUALFUND"]:
+                if (getattr(info, "quote_type", "") or "").upper() in ["ETF","MUTUALFUND"]:
                     continue
                 sector = t.info.get("sector", "")
-                priority = is_priority_sector(sector)
-                results.append({"ticker": ticker, "change": change_pct, "dollar_vol": dollar_vol/1e6, "sector": sector, "priority": priority, "price": last_close})
+                results.append({"ticker":ticker,"change":change_pct,"dollar_vol":dollar_vol/1e6,"sector":sector,"priority":is_priority_sector(sector),"price":last_close})
             except Exception:
                 continue
         if not results:
-            send_telegram(f"<b>미국 쉐도잉</b>  {today.strftime('%m/%d')}\n조건 충족 종목 없음")
+            send_telegram(f"<b>미국 쉐도잉</b> {today.strftime('%m/%d')}\n조건 충족 없음")
             return
-        df_res = pd.DataFrame(results).sort_values(["priority","change"], ascending=[False,False])
-        lines = [f"<b>미국 주식 쉐도잉</b>  {today.strftime('%m/%d')} 전일 종가", f"조건: 상승률 8%+ 거래대금 5천만$+ 시총 10억$+  {len(df_res)}개"]
+        df_res = pd.DataFrame(results).sort_values(["priority","change"],ascending=[False,False])
+        lines = [f"<b>미국 쉐도잉</b> {today.strftime('%m/%d')}",f"상승률 8%+ 거래대금 5천만$+ 시총 10억$+  {len(df_res)}개"]
         for _, row in df_res.iterrows():
             star = "★ " if row["priority"] else ""
-            tag = f"[{row['priority']}]" if row["priority"] else f"[{row['sector'][:12]}]"
+            tag = f"[{row['priority']}]" if row["priority"] else f"[{row['sector'][:10]}]"
             lines.append(f"{star}<b>{row['ticker']}</b>{tag} +{row['change']:.1f}%  ${row['dollar_vol']:.0f}M  ${row['price']:.2f}")
-        lines.append("★=우선섹터(테크·AI·바이오·우주·에너지·전력)")
         send_telegram("\n".join(lines))
     except Exception as e:
         send_telegram(f"미국 쉐도잉 오류: {e}")
@@ -160,13 +126,13 @@ def run_ark_tracking():
                     continue
                 df = pd.DataFrame(rows).rename(columns={"ticker":"Ticker","weight":"Weight","company":"Company"})
                 top5 = df.nlargest(5, "Weight") if "Weight" in df.columns else df.head(5)
-                all_items.append({"fund": symbol, "fname": fname, "top5": top5})
+                all_items.append({"fund":symbol,"fname":fname,"top5":top5})
             except Exception:
                 continue
         if not all_items:
-            send_telegram(f"<b>ARK 추적</b>  {today.strftime('%m/%d')}\n데이터 수집 실패")
+            send_telegram(f"<b>ARK 추적</b> {today.strftime('%m/%d')}\n데이터 수집 실패")
             return
-        lines = [f"<b>ARK Invest 포트 추적</b>  {today.strftime('%m/%d')}"]
+        lines = [f"<b>ARK Invest 포트 추적</b> {today.strftime('%m/%d')}"]
         for item in all_items:
             lines.append(f"\n<b>{item['fund']}</b> {item['fname'][:25]}")
             for _, row in item["top5"].iterrows():
@@ -175,3 +141,15 @@ def run_ark_tracking():
         send_telegram("\n".join(lines))
     except Exception as e:
         send_telegram(f"ARK 추적 오류: {e}")
+= 15) & (df["거래대금억"] >= 500)].copy()
+        filtered = filtered.sort_values("등락률", ascending=False)
+        if filtered.empty:
+            send_telegram(f"<b>국내 쉐도잉</b> {today.strftime('%m/%d')}\n조건 충족 종목 없음")
+            return
+        lines = [f"<b>국내 쉐도잉</b> {today.strftime('%m/%d')}", f"상승률 15%+ 거래대금 500억+  {len(filtered)}개"]
+        for code, row in filtered.iterrows():
+            name = krx.get_market_ticker_name(code)
+            lines.append(f"<b>{name}</b>({code}) +{row['등락률']:.1f}%  {row['거래대금억']:.0f}억  {int(row['종가']):,}원")
+        send_telegram("\n".join(lines))
+    except Exception as e:
+        send_telegram(f"국내 쉐도잉 오류: {e}")
